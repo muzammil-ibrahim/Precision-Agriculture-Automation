@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Plot CSV Points</title>
+    <style>
+        canvas { border: 1px solid black; background: #f8f8f8; }
+    </style>
+</head>
+<body>
+
+<canvas id="plot" width="1000" height="800"></canvas>
+
+<script>
+async function loadCSV(file) {
+    let res = await fetch(file);
+    let text = await res.text();
+    let rows = text.trim().split("\n").slice(1); 
+    return rows.map(row => {
+        let [x, y] = row.split(",").map(Number);
+        return {x, y};
+    });
+}
+
+function plotPoints(points) {
+    const canvas = document.getElementById("plot");
+    const ctx = canvas.getContext("2d");
+
+    const xs = points.map(p => p.x);
+    const ys = points.map(p => p.y);
+    const minX = Math.min(...xs), maxX = Math.max(...xs);
+    const minY = Math.min(...ys), maxY = Math.max(...ys);
+
+    function scaleX(val) {
+        return ((val - minX) / (maxX - minX)) * (canvas.width - 20) + 10;
+    }
+    function scaleY(val) {
+        return canvas.height - (((val - minY) / (maxY - minY)) * (canvas.height - 20) + 10);
+    }
+
+    ctx.fillStyle = "red";
+    points.forEach(p => {
+        ctx.beginPath();
+        ctx.arc(scaleX(p.x), scaleY(p.y), 5, 0, Math.PI * 2);
+        ctx.fill();
+    });
+
+    // Draw axes
+    ctx.strokeStyle = "#888";
+    ctx.beginPath();
+    ctx.moveTo(0, scaleY(0));
+    ctx.lineTo(canvas.width, scaleY(0));
+    ctx.moveTo(scaleX(0), 0);
+    ctx.lineTo(scaleX(0), canvas.height);
+    ctx.stroke();
+}
+
+loadCSV("output.csv").then(points => {
+    plotPoints(points);
+});
+</script>
+
+</body>
+</html>

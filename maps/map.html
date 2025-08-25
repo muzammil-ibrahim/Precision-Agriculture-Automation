@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Click Map to Get Coordinates</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <style>
+    html, body { height: 100%; margin: 0; padding: 0; }
+    #map { height: 100%; width: 100%; }
+    .panel {
+      position: absolute;
+      top: 12px;
+      right: 12px;
+      background: rgba(255,255,255,0.95);
+      padding: 10px;
+      border-radius: 8px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+      font-family: Arial, sans-serif;
+      z-index: 1000;
+      width: 240px;
+    }
+  </style>
+</head>
+<body>
+
+<div id="map"></div>
+
+<div class="panel">
+  <label>Upload CSV<input type="file" id="upload" /></label>
+</div>
+
+<!-- Leaflet JS -->
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<script>
+  // Create map
+  var map = L.map('map').setView([20, 0], 2);
+
+  // Add OpenStreetMap tiles
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 22,
+  }).addTo(map);
+
+  let geofenceCoords = [];
+
+  document.getElementById('upload').addEventListener('change', function(e) {
+    const file = e.target.files[0];
+
+    Papa.parse(file, {
+      header: true, 
+      skipEmptyLines: true,
+      complete: function(results) {
+        console.log("Parsed Data:", results.data);
+
+        // Extract and clean coordinates
+        geofenceCoords = results.data
+          .map(row => ({
+            lat: parseFloat(row.lat),
+            lng: parseFloat(row.lng)
+          }))
+          .filter(coord => !isNaN(coord.lat) && !isNaN(coord.lng));
+
+        console.log("Coordinates:", geofenceCoords);
+
+        if (geofenceCoords.length > 0) {
+
+          const polygon = L.polygon(
+            geofenceCoords.map(c => [c.lat, c.lng]),
+            { color: 'red', weight: 2 }
+          ).addTo(map);
+
+          map.fitBounds(polygon.getBounds());
+        } else {
+          alert("No valid coordinates found in CSV.");
+        }
+      }
+    });
+  });
+</script>
+
+</body>
+</html>

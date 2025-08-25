@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Click Map to Get Coordinates</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <style>
+    html, body { height: 100%; margin: 0; padding: 0; }
+    #map { height: 100%; width: 100%; }
+    .panel {
+      position: absolute;
+      top: 12px;
+      right: 12px;
+      background: rgba(255,255,255,0.95);
+      padding: 10px;
+      border-radius: 8px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+      font-family: Arial, sans-serif;
+      z-index: 1000;
+      width: 240px;
+    }
+    .coords { font-family: monospace; font-size: 13px; margin-bottom: 8px; }
+    .btn {
+      display:inline-block;
+      padding:6px 8px;
+      margin:4px 4px 0 0;
+      border-radius:6px;
+      border:1px solid #ddd;
+      cursor:pointer;
+      background:#f7f7f7;
+      font-size:13px;
+    }
+    .btn:hover { background:#eee; }
+    .click-list {
+      max-height:120px;
+      overflow:auto;
+      border-top:1px solid #eee;
+      margin-top:8px;
+      padding-top:8px;
+      font-size:12px;
+    }
+    .click-item {
+      padding:4px 0;
+      border-bottom:1px dashed #f0f0f0;
+    }
+  </style>
+</head>
+<body>
+
+<div id="map"></div>
+
+<div class="panel">
+  <strong>Last click:</strong>
+  <div class="coords" id="coords">None yet</div>
+  <button class="btn" id="copyBtn">Copy coords</button>
+  <button class="btn" id="clearBtn">Clear list</button>
+  <button class="btn" id="exportBtn">Export CSV</button>
+  <div class="click-list" id="clickList"></div>
+</div>
+
+<!-- Leaflet JS -->
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+<script>
+  var map = L.map('map').setView([20, 0], 2);
+
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '© OpenStreetMap'
+  }).addTo(map);
+
+  var coordsEl = document.getElementById('coords');
+  var clickListEl = document.getElementById('clickList');
+  var copyBtn = document.getElementById('copyBtn');
+  var clearBtn = document.getElementById('clearBtn');
+  var exportBtn = document.getElementById('exportBtn');
+
+  var clicks = [];
+  var lastMarker = null;
+
+  function renderList() {
+    clickListEl.innerHTML = '';
+    if (clicks.length === 0) {
+      clickListEl.innerHTML = '<div style="color:#666;font-size:13px">No clicks yet</div>';
+      return;
+    }
+    clicks.slice().reverse().forEach(function(c) {
+      var div = document.createElement('div');
+      div.className = 'click-item';
+      div.textContent = c.lat + ', ' + c.lng;
+      clickListEl.appendChild(div);
+    });
+  }
+
+  map.on('click', function(e) {
+    var lat = e.latlng.lat.toFixed(8);
+    var lng = e.latlng.lng.toFixed(8);
+
+    coordsEl.textContent = lat + ', ' + lng;
+
+    if (lastMarker) {
+      lastMarker.setLatLng([lat, lng]);
+    } else {
+      lastMarker = L.marker([lat, lng]).addTo(map);
+    }
+
+    clicks.push({ lat: lat, lng: lng });
+    renderList();
+  });
+
+  copyBtn.addEventListener('click', function() {
+    if (clicks.length === 0) {
+      alert('No coordinates to copy.');
+      return;
+    }
+    var latest = clicks[clicks.length - 1];
+    var text = latest.lat + ', ' + latest.lng;
+    navigator.clipboard.writeText(text).then(function() {
+      copyBtn.textContent = 'Copied!';
+      setTimeout(function() { copyBtn.textContent = 'Copy coords'; }, 1200);
+    });
+  });
+
+  clearBtn.addEventListener('click', function() {
+    clicks = [];
+    coordsEl.textContent = 'None yet';
+    if (lastMarker) {
+      map.removeLayer(lastMarker);
+      lastMarker = null;
+    }
+    renderList();
+  });
+
+  exportBtn.addEventListener('click', function() {
+    if (clicks.length === 0) {
+      alert('No clicks to export.');
+      return;
+    }
+    var csv = 'lat,lng\n' + clicks.map(function(c) { return c.lat + ',' + c.lng; }).join('\n');
+    var blob = new Blob([csv], { type: 'text/csv' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = 'map_clicks.csv';
+    a.click();
+    URL.revokeObjectURL(url);
+  });
+
+  renderList();
+</script>
+
+</body>
+</html>

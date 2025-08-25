@@ -1,0 +1,380 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<title>Field Tracker — fixed frame, moving world</title>
+<style>
+  body { margin:0; font-family: Arial, sans-serif; height:100vh; display:flex; }
+  #left { width: 72%; background:#e6f2e9; position:relative; }
+  #canvas { width:100%; height:100vh; display:block; background:#dfeef0; }
+  #right { width:28%; padding:12px; box-sizing:border-box; background:#fafafa; border-left:1px solid #ddd; overflow:auto; }
+  label{display:block;margin:8px 0 4px;font-weight:600}
+  input[type=file]{width:100%}
+  button{margin:6px 4px 6px 0;padding:8px 10px}
+  #log{height:220px; overflow:auto; border:1px solid #eee; padding:8px; background:#fff}
+  .done{color:green;font-weight:700}
+  .control-row{margin-top:6px}
+</style>
+</head>
+<body>
+  <div id="left">
+    <canvas id="canvas"></canvas>
+  </div>
+  <div id="right">
+    <h3>Field Tracker</h3>
+
+    <label>1) Upload geofence CSV (x,y)</label>
+    <input id="geofenceFile" type="file" accept=".csv" />
+
+    <label>2) Upload digging points CSV (x,y)</label>
+    <input id="pointsFile" type="file" accept=".csv" />
+
+    <label>3) (Optional) Upload tractor icon (PNG)</label>
+    <input id="tractorFile" type="file" accept="image/*" />
+
+    <div class="control-row">
+      <button id="startBtn">Start</button>
+      <button id="pauseBtn">Pause</button>
+      <button id="resetBtn">Reset</button>
+    </div>
+
+    <label>Speed</label>
+    <input id="speed" type="range" min="0.2" max="3" step="0.1" value="1">
+
+    <label>Slot size (pixels)</label>
+    <input id="slotSize" type="number" min="10" max="200" value="40">
+
+    <div style="margin-top:10px">
+      <strong>Instructions:</strong>
+      <div>- Upload geofence then points. Points should lie inside polygon.</div>
+      <div>- Click Start. Tractor stays visually centered; field moves.</div>
+    </div>
+
+    <h4 style="margin-top:12px">Status Log</h4>
+    <div id="log">Waiting for files...</div>
+  </div>
+
+<script>
+// ---------- Utilities ----------
+function parseCSV(text){
+  const lines = text.trim().split(/\r?\n/).map(l=>l.trim()).filter(Boolean);
+  let rows = lines.map(l => l.split(/[,;\t]/).map(s => s.trim()));
+  // if header with non-numeric first cell, drop header
+  if (rows.length && isNaN(Number(rows[0][0]))) rows.shift();
+  return rows.map(r => ({x: Number(r[0]), y: Number(r[1])}));
+}
+function log(msg, done=false){
+  const d = document.getElementById('log');
+  const p = document.createElement('div');
+  p.textContent = msg;
+  if(done) p.classList.add('done');
+  d.appendChild(p);
+  d.scrollTop = d.scrollHeight;
+}
+
+// ---------- Canvas & world state ----------
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+function resizeCanvas(){ canvas.width = canvas.clientWidth; canvas.height = canvas.clientHeight; }
+window.addEventListener('resize', () => { resizeCanvas(); computeViewTransform(); });
+resizeCanvas();
+
+let geofence = [];      // [{x,y},...]
+let points = [];        // [{x,y,done,num}]
+let tractorImg = new Image();
+let customTractorLoaded = false;
+
+// world transform: scale and offset so world coords -> screen
+let scale = 1;
+let viewOffset = {x:0,y:0}; // offset in screen px: screen = world*scale + viewOffset
+
+// tractor world state (position in world coords)
+let tractorWorld = {x:0,y:0};
+let currentTargetIndex = 0;
+let moving = false;
+let progress = 0; // 0..1
+let moveFrom = null;
+let moveTo = null;
+let speedMultiplier = 1;
+let slotSize = Number(document.getElementById('slotSize').value) || 40;
+
+// fit world to canvas: compute bounding box and scaling
+function computeViewTransform(){
+  if(!geofence.length) return;
+  let xs = geofence.map(p=>p.x), ys = geofence.map(p=>p.y);
+  points.forEach(p=>{ xs.push(p.x); ys.push(p.y); });
+  let minx = Math.min(...xs), maxx = Math.max(...xs);
+  let miny = Math.min(...ys), maxy = Math.max(...ys);
+  let w = maxx - minx || 1, h = maxy - miny || 1;
+  // provide padding
+  const pad = 80;
+  scale = Math.min((canvas.width - pad)/w, (canvas.height - pad)/h);
+  // center world in canvas initially
+  const centerWorld = {x: minx + w/2, y: miny + h/2};
+  const screenCenter = {x: canvas.width/2, y: canvas.height/2};
+  viewOffset.x = screenCenter.x - centerWorld.x * scale;
+  viewOffset.y = screenCenter.y - centerWorld.y * scale;
+}
+function worldToScreen(wx, wy){
+  return { x: wx*scale + viewOffset.x, y: wy*scale + viewOffset.y };
+}
+function screenToWorld(sx, sy){
+  return { x: (sx - viewOffset.x)/scale, y: (sy - viewOffset.y)/scale };
+}
+
+// ---------- Drawing ----------
+function draw(){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  // background (light)
+  ctx.fillStyle = '#eef7f1';
+  ctx.fillRect(0,0,canvas.width,canvas.height);
+
+  if(!geofence.length) return;
+
+  // draw polygon (field)
+  ctx.save();
+  ctx.lineWidth = Math.max(1, 2/scale);
+  ctx.strokeStyle = '#2b7a3a';
+  ctx.fillStyle = '#dff3e3';
+  ctx.beginPath();
+  geofence.forEach((p,i)=>{
+    const s = worldToScreen(p.x,p.y);
+    if(i===0) ctx.moveTo(s.x,s.y); else ctx.lineTo(s.x,s.y);
+  });
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  // draw crop/row lines for realism (simple pattern - optional)
+  // we create parallel lines across bounding box clipped to polygon region
+  ctx.clip();
+
+  // row spacing in world units (appear as crop rows)
+  const rowSpacing = 20; // world units
+  // compute bounding box in world coords
+  const xs = geofence.map(p=>p.x), ys = geofence.map(p=>p.y);
+  const minx = Math.min(...xs), maxx = Math.max(...xs);
+  const miny = Math.min(...ys), maxy = Math.max(...ys);
+  ctx.globalAlpha = 0.15;
+  ctx.strokeStyle = '#cfe9c9';
+  ctx.lineWidth = Math.max(1, 1/scale);
+  for(let y = miny; y <= maxy; y += rowSpacing){
+    const a = worldToScreen(minx, y), b = worldToScreen(maxx, y);
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+  ctx.restore();
+
+  // draw slots (squares) and points
+  points.forEach(pt=>{
+    const s = worldToScreen(pt.x, pt.y);
+    const sz = (slotSize) * scale; // slot size scaled
+    ctx.lineWidth = Math.max(1, 2/scale);
+    ctx.strokeStyle = pt.done ? '#1b9e35' : '#d23a2c';
+    ctx.strokeRect(s.x - sz/2, s.y - sz/2, sz, sz);
+
+    // digging point center
+    ctx.beginPath();
+    ctx.fillStyle = '#111';
+    ctx.arc(s.x, s.y, Math.max(2, 4*scale), 0, Math.PI*2);
+    ctx.fill();
+
+    // label number
+    ctx.fillStyle = '#000';
+    ctx.font = `${12*scale}px Arial`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
+    ctx.fillText(pt.num, s.x, s.y - sz/2 - 6*scale);
+  });
+
+  // Tractor: draw it at CENTER of canvas (fixed frame look)
+  const centerX = canvas.width/2, centerY = canvas.height/2;
+  const tsize = Math.max(16, 48 * scale); // scaled visible size
+  if(customTractorLoaded){
+    ctx.drawImage(tractorImg, centerX - tsize/2, centerY - tsize/2, tsize, tsize);
+  } else {
+    // fallback stylized tractor-like circle with small cab
+    ctx.fillStyle = '#f4a742';
+    ctx.beginPath();
+    ctx.ellipse(centerX, centerY, tsize/2, tsize/3, 0, 0, 2*Math.PI);
+    ctx.fill();
+    // small cabin
+    ctx.fillStyle = '#a63b3b';
+    ctx.fillRect(centerX - tsize*0.18, centerY - tsize*0.28, tsize*0.36, tsize*0.18);
+  }
+
+  // optional: draw path preview (line from current tractor world pos to remaining points)
+  ctx.strokeStyle = '#333';
+  ctx.lineWidth = Math.max(1, 1.5/scale);
+  ctx.beginPath();
+  const tWorld = tractorWorld;
+  const tScreen = worldToScreen(tWorld.x, tWorld.y);
+  ctx.moveTo(tScreen.x, tScreen.y);
+  for(let i = currentTargetIndex; i < points.length; i++){
+    const s = worldToScreen(points[i].x, points[i].y);
+    ctx.lineTo(s.x, s.y);
+  }
+  ctx.stroke();
+}
+
+// ---------- Movement logic (tractor stays visually centered) ----------
+function startMoving(){
+  if(!points.length){ log('No points loaded'); return; }
+  if(currentTargetIndex >= points.length){ log('All points done'); return; }
+  if(moving) return;
+  moveFrom = { x: tractorWorld.x, y: tractorWorld.y };
+  moveTo = { x: points[currentTargetIndex].x, y: points[currentTargetIndex].y };
+  progress = 0;
+  moving = true;
+  log(`Moving to point ${points[currentTargetIndex].num}...`);
+}
+function pauseMoving(){ moving = false; log('Paused'); }
+function resetSimulation(){
+  // reset flags
+  points.forEach(p=>p.done=false);
+  currentTargetIndex = 0;
+  moving = false;
+  progress = 0;
+  if(points.length) tractorWorld = { x: points[0].x - 80, y: points[0].y - 80 };
+  computeViewTransform();
+  log('Reset');
+}
+function updateStep(dt){
+  if(!moving) return;
+  const speed = 60 * speedMultiplier; // world units per second baseline
+  // compute distance in world units
+  const dx = moveTo.x - moveFrom.x, dy = moveTo.y - moveFrom.y;
+  const dist = Math.hypot(dx,dy) || 1;
+  // convert to progress increment using speed and dt (ms)
+  const travelTime = (dist / speed) * 1000; // ms
+  progress += dt / travelTime;
+  if(progress >= 1){
+    // reached
+    tractorWorld.x = moveTo.x; tractorWorld.y = moveTo.y;
+    // mark drilling
+    moving = false;
+    log(`Drilling at point ${points[currentTargetIndex].num}...`);
+    setTimeout(()=>{
+      points[currentTargetIndex].done = true;
+      log(`Point ${points[currentTargetIndex].num} completed ✅`, true);
+      currentTargetIndex++;
+      if(currentTargetIndex < points.length){
+        moveFrom = {x: tractorWorld.x, y: tractorWorld.y};
+        moveTo = {x: points[currentTargetIndex].x, y: points[currentTargetIndex].y};
+        progress = 0;
+        moving = true;
+        log(`Moving to point ${points[currentTargetIndex].num}...`);
+      } else {
+        log('All points completed ✅', true);
+      }
+    }, 900); // drilling pause
+  } else {
+    // interpolate world position
+    tractorWorld.x = moveFrom.x + (moveTo.x - moveFrom.x) * progress;
+    tractorWorld.y = moveFrom.y + (moveTo.y - moveFrom.y) * progress;
+  }
+  // update view offset so tractor is visually centered:
+  viewOffset.x = canvas.width/2 - tractorWorld.x * scale;
+  viewOffset.y = canvas.height/2 - tractorWorld.y * scale;
+}
+
+// ---------- File inputs ----------
+document.getElementById('geofenceFile').addEventListener('change', function(e){
+  const f = e.target.files[0]; if(!f) return;
+  const r = new FileReader();
+  r.onload = function(){ try{
+      geofence = parseCSV(r.result);
+      if(!geofence.length) throw 'empty';
+      computeViewTransform();
+      // set initial tractorWorld to near first point or center
+      const xs = geofence.map(p=>p.x), ys = geofence.map(p=>p.y);
+      const center = {x: (Math.min(...xs)+Math.max(...xs))/2, y: (Math.min(...ys)+Math.max(...ys))/2};
+      tractorWorld = {x: center.x, y: center.y};
+      viewOffset.x = canvas.width/2 - tractorWorld.x * scale;
+      viewOffset.y = canvas.height/2 - tractorWorld.y * scale;
+      log('Geofence loaded');
+    }catch(err){ log('Failed to parse geofence CSV: '+err); }
+  };
+  r.readAsText(f);
+});
+
+document.getElementById('pointsFile').addEventListener('change', function(e){
+  const f = e.target.files[0]; if(!f) return;
+  const r = new FileReader();
+  r.onload = function(){ try{
+      const arr = parseCSV(r.result);
+      if(!arr.length) throw 'empty';
+      points = arr.map((p,i)=>({x:p.x, y:p.y, done:false, num:i+1}));
+      // initialize tractor near first point if not set
+      tractorWorld = { x: points[0].x - 80, y: points[0].y - 80 };
+      currentTargetIndex = 0;
+      computeViewTransform();
+      viewOffset.x = canvas.width/2 - tractorWorld.x * scale;
+      viewOffset.y = canvas.height/2 - tractorWorld.y * scale;
+      log('Digging points loaded: ' + points.length);
+    } catch(err){ log('Failed to parse points CSV: '+err); }
+  };
+  r.readAsText(f);
+});
+
+document.getElementById('tractorFile').addEventListener('change', function(e){
+  const f = e.target.files[0]; if(!f) return;
+  const r = new FileReader();
+  r.onload = function(){
+    tractorImg = new Image();
+    tractorImg.onload = () => { customTractorLoaded = true; log('Tractor icon loaded'); };
+    tractorImg.src = r.result;
+  };
+  r.readAsDataURL(f);
+});
+
+// ---------- Controls ----------
+document.getElementById('startBtn').addEventListener('click', ()=>{
+  if(!points.length){ log('No points loaded'); return; }
+  speedMultiplier = Number(document.getElementById('speed').value);
+  slotSize = Number(document.getElementById('slotSize').value);
+  if(!moving){
+    moveFrom = { x: tractorWorld.x, y: tractorWorld.y };
+    moveTo = { x: points[currentTargetIndex].x, y: points[currentTargetIndex].y };
+    progress = 0;
+    moving = true;
+    log(`Started. Moving to point ${points[currentTargetIndex].num}...`);
+  }
+});
+document.getElementById('pauseBtn').addEventListener('click', ()=>{ pauseMoving(); });
+document.getElementById('resetBtn').addEventListener('click', ()=>{ resetSimulation(); });
+
+// speed live update
+document.getElementById('speed').addEventListener('input', (e)=>{ speedMultiplier = Number(e.target.value); });
+
+// ---------- Main loop ----------
+let last = performance.now();
+function frame(now){
+  const dt = now - last;
+  last = now;
+  updateStep(dt);
+  draw();
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+// set a helpful default tractor icon (embedded Data URI small top-down tractor-like)
+tractorImg.src = 'data:image/svg+xml;utf8,\
+<svg xmlns="http://www.w3.org/2000/svg" width="120" height="80">\
+<rect rx="12" ry="12" x="10" y="22" width="100" height="36" fill="%23f4a742" stroke="%233a2f2f" stroke-width="4"/>\
+<rect x="50" y="12" width="20" height="24" fill="%238c3b3b"/>\
+<circle cx="28" cy="62" r="10" fill="%23111"/><circle cx="92" cy="62" r="10" fill="%23111"/>\
+</svg>';
+tractorImg.onload = () => { customTractorLoaded = true; };
+
+// initial helpful log
+log('Load geofence CSV and points CSV on the right. Then Start.');
+
+// expose reset to console for debug
+window._sim = { resetSimulation };
+</script>
+</body>
+</html>
