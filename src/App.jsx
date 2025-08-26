@@ -303,7 +303,7 @@ export default function App() {
 
 const handleGenerate = async () => {
     try {
-      const url = `http://localhost:8000/generate?col_spacing_ft=${colSpacing}&row_spacing_ft=${rowSpacing}&border_margin_ft=${borderMargin}`;
+      const url = `http://localhost:8080/generate?col_spacing_ft=${colSpacing}&row_spacing_ft=${rowSpacing}&border_margin_ft=${borderMargin}`;
       const res = await fetch(url);
       const data = await res.json();
       if (data.status === "success") {
@@ -320,7 +320,7 @@ const handleGenerate = async () => {
 
   const handleClear = async () => {
   try {
-    const res = await fetch("http://localhost:8000/clear-csv");
+    const res = await fetch("http://localhost:8080/clear-csv");
     const data = await res.json();
     console.log("Backend response:", data);
 
