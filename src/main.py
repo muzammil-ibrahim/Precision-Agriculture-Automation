@@ -29,8 +29,8 @@ def utm_zone_from_lon(lon):
 # File paths
 base_dir = r"C:\Users\Muzammil\OneDrive\Desktop\my-app"
 geofence_input_path = os.path.join(base_dir, "src", "geofence.csv")
-geofence_output_path = os.path.join(base_dir, "public", "geofence_converted.csv")
-points_output_path = os.path.join(base_dir, "public", "points_converted.csv")
+geofence_output_path = os.path.join(base_dir, "dist", "geofence_converted.csv")
+points_output_path = os.path.join(base_dir, "dist", "points_converted.csv")
 
 @app.get("/generate")
 def generate_points(

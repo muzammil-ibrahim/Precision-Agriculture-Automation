@@ -49,10 +49,10 @@ export default function App() {
   const FRAME_W = 900;
   const FRAME_H = 600;
 
-  useEffect(() => {
+  const fetchCSVData = () => {
     Promise.all([
-      fetch("/geofence_converted.csv").then((res) => res.text()),
-      fetch("/points_converted.csv").then((res) => res.text()),
+      fetch('http://localhost:8080/get_csv').then((res) => res.text()),
+      fetch('http://localhost:8080/get_csv1').then((res) => res.text()),
     ]).then(([geofenceCSV, pointsCSV]) => {
       Papa.parse(geofenceCSV, {
         header: true,
@@ -67,6 +67,7 @@ export default function App() {
           );
         },
       });
+
       Papa.parse(pointsCSV, {
         header: true,
         skipEmptyLines: true,
@@ -80,6 +81,10 @@ export default function App() {
         },
       });
     });
+  };
+
+  useEffect(() => {
+    fetchCSVData();
   }, []);
 
   useEffect(() => {
@@ -303,7 +308,8 @@ const handleGenerate = async () => {
       const data = await res.json();
       if (data.status === "success") {
         console.log(data.points);
-        window.location.reload();
+        fetchCSVData();
+        // window.location.reload();
       } else {
         alert("Error: " + data.message);
       }
@@ -320,7 +326,8 @@ const handleGenerate = async () => {
 
     if (data.status === "success") {
       console.log("Clear worked, reloading...");
-      window.location.reload();
+      fetchCSVData();
+      // window.location.reload();
     } else {
       alert("Error: " + data.message);
     }
