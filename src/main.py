@@ -1,12 +1,16 @@
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.responses import JSONResponse
 import pandas as pd
 import numpy as np
 from pyproj import Transformer
 from shapely.geometry import Polygon, Point
 from pymavlink import mavutil
+from datetime import datetime
 import paho.mqtt.client as mqtt
 import threading
+import csv
 import time
 import math
 import os
@@ -113,49 +117,118 @@ def clear_csv():
     except Exception as e:
         return {"status": "error", "message": str(e)}
     
+@app.get("/get_csv")
+async def get_csv():
+    file_path = r"C:\Users\Muzammil\OneDrive\Desktop\my-app\dist\geofence_converted.csv"
+    return FileResponse(
+        path=file_path,
+        media_type="text/csv",
+        filename="geofence_converted.csv"
+    )
 
-# MAVLink & MQTT config
-MAVLINK_URI = "COM4:57600"  # Or COM3:57600, /dev/ttyUSB0:57600
-MQTT_BROKER = "13.232.191.178"
-MQTT_PORT = 1883
-MQTT_TOPIC = "drone/yaw"
+@app.get("/get_csv1")
+async def get_csv1():
+    file_path = r"C:\Users\Muzammil\OneDrive\Desktop\my-app\dist\points_converted.csv"
+    return FileResponse(
+        path=file_path,
+        media_type="text/csv",
+        filename="points_converted.csv"
+    )
 
-# MQTT client
-mqtt_client = mqtt.Client()
-mqtt_client.connect(MQTT_BROKER, MQTT_PORT, 60)
+@app.get("/get_csv2")
+async def get_csv1():
+    file_path = r"C:\Users\Muzammil\OneDrive\Desktop\my-app\src\geofence.csv"
+    return FileResponse(
+        path=file_path,
+        media_type="text/csv",
+        filename="geofence.csv"
+    )
 
-# Shared yaw variable
-latest_yaw = 0.0
+# Config
+UDP_PORT = "udp:127.0.0.1:14550"  # your rover’s UDP connection string
+CSV_FILE = "geofence_survey_data.csv"
+DIST_THRESHOLD = 1.0  # meters
 
-def mavlink_reader():
-    global latest_yaw
-    
-    master = mavutil.mavlink_connection("COM4", baud=57600)
+# Globals
+logging_active = False
+logging_thread = None
 
 
-    print("[mavlink] waiting for heartbeat...")
+# Haversine distance
+def haversine(lat1, lon1, lat2, lon2):
+    R = 6371000
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlambda = math.radians(lon2 - lon1)
+    a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
+    return 2 * R * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+
+# Background logging function
+def mavlink_logger():
+    global logging_active
+
+    # ✅ Reset CSV at the start of each session
+    with open(CSV_FILE, mode="w", newline="") as file:
+        writer = csv.writer(file)
+        writer.writerow(["latitude", "longitude", "label", "timestamp", "fix_quality", "h_accuracy"])
+
+    # Connect to MAVLink
+    print(f"🔗 Connecting to MAVLink on {UDP_PORT}...")
+    master = mavutil.mavlink_connection(UDP_PORT)
     master.wait_heartbeat()
-    print("[mavlink] heartbeat received")
+    print("✅ Heartbeat received")
 
-    while True:
-        msg = master.recv_match(type='ATTITUDE', blocking=True)
-        if msg:
-            yaw_deg = math.degrees(msg.yaw) % 360
-            latest_yaw = yaw_deg
-            mqtt_client.publish(MQTT_TOPIC, f"{yaw_deg:.2f}")
+    last_lat, last_lon = None, None
+    point_count = 0
 
-# Start MAVLink reading in a background thread
-# threading.Thread(target=mavlink_reader, daemon=True).start()
+    while logging_active:
+        msg = master.recv_match(type="GPS_RAW_INT", blocking=True, timeout=5)
+        if not msg:
+            continue
 
-# Keep MQTT alive in another thread
-def mqtt_loop():
-    while True:
-        mqtt_client.loop()
-        time.sleep(0.1)
+        lat = msg.lat / 1e7
+        lon = msg.lon / 1e7
+        h_acc = msg.h_acc / 1000.0 if msg.h_acc != 0xFFFF else None
+        fix_type = msg.fix_type
+        timestamp = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
 
-# threading.Thread(target=mqtt_loop, daemon=True).start()
+        fix_quality_map = {
+            0: "No Fix", 1: "Dead Reckoning", 2: "2D-Fix", 3: "3D-Fix",
+            4: "RTK-Float", 5: "RTK-Fixed"
+        }
+        fix_quality = fix_quality_map.get(fix_type, "Unknown")
 
-# HTTP endpoint just for debugging
-# @app.get("/yaw")
-# def get_yaw():
-#     return {"yaw": latest_yaw}
+        if last_lat is None or haversine(last_lat, last_lon, lat, lon) >= DIST_THRESHOLD:
+            point_count += 1
+            label = f"P{point_count}"
+            with open(CSV_FILE, mode="a", newline="") as file:
+                writer = csv.writer(file)
+                writer.writerow([lat, lon, label, timestamp, fix_quality, h_acc])
+            print(f"✅ Logged {label}: {lat}, {lon}, fix={fix_quality}, acc={h_acc}m")
+            last_lat, last_lon = lat, lon
+
+        time.sleep(0.5)
+
+    print("🛑 Logging stopped.")
+
+
+# API endpoints
+@app.post("/start")
+def start_logging():
+    global logging_active, logging_thread
+    if logging_active:
+        return JSONResponse({"status": "already_running"})
+
+    logging_active = True
+    logging_thread = threading.Thread(target=mavlink_logger, daemon=True)
+    logging_thread.start()
+    return {"status": "started"}
+
+
+@app.post("/stop")
+def stop_logging():
+    global logging_active
+    logging_active = False
+    return {"status": "stopped"}
+

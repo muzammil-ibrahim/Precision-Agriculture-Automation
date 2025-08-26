@@ -4,7 +4,9 @@ import Papa from "papaparse";
 import { UncontrolledReactSVGPanZoom } from 'react-svg-pan-zoom';
 import tractorTop from "./tractor.png";
 import drillIcon from "./drill.png";
+import CsvViewer from "./CsvViewer";
 import mqtt from "mqtt";
+
 
 function bbox(points) {
   const xs = points.map((p) => p.x);
@@ -45,14 +47,19 @@ export default function App() {
   const [yaw, setYaw] = useState(0);
   const tractorPosRef = useRef({ x: 0, y: 0 });
 
+  const [page, setPage] = useState("field"); // “field” or “csv”
+
+
   const slotSize = 48;
   const FRAME_W = 900;
   const FRAME_H = 600;
 
+
+
   const fetchCSVData = () => {
     Promise.all([
-      fetch('/geofence_converted.csv').then((res) => res.text()),
-      fetch('/points_converted.csv').then((res) => res.text()),
+      fetch('/get_csv').then((res) => res.text()),
+      fetch('/get_csv1').then((res) => res.text()),
     ]).then(([geofenceCSV, pointsCSV]) => {
       Papa.parse(geofenceCSV, {
         header: true,
@@ -337,11 +344,25 @@ const handleGenerate = async () => {
   }
 };
 
-
   const svgRotation = yaw - 90;
 
 
   return (
+  <div>
+  <nav style={{ marginBottom: "1rem" }}>
+  <button onClick={() => { setPage("field"); }}>
+    Field View
+  </button>
+  <button onClick={() => {
+    setPage("csv");
+    if (csvData.length === 0 && !csvLoading) fetchAndParseCsv();
+  }}>
+    CSV View
+  </button>
+  </nav>
+
+  {page === "field" ? (
+
   <div
     style={{
       display: "flex",
@@ -539,7 +560,11 @@ const handleGenerate = async () => {
         {running ? "Pause" : "Start"}
       </button><br/>
     </div>
-  </div>
+  </div>) :
+  (
+    <CsvViewer/>
+    )}
+</div>
 );
 }
 
