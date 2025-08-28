@@ -380,13 +380,13 @@ const handleGenerate = async () => {
   <div>
   <nav style={{ marginBottom: "1rem" }}>
   <button onClick={() => { setPage("field"); }}>
-    Field View
+    Agri Track
   </button>
   <button onClick={() => {
     setPage("csv");
     if (csvData.length === 0 && !csvLoading) fetchAndParseCsv();
   }}>
-    CSV View
+    Geofence Capture
   </button>
   </nav>
 
