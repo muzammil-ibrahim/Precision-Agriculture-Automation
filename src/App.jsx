@@ -112,27 +112,20 @@ export default function App() {
     }
   }, [geofence]);
 
-  // useEffect(() => {
-  //   // Connect to your MQTT broker via WebSocket
-  //   const brokerUrl = "wss://13.232.191.178:9001"; // Change if your broker is remote
-  //   const topic = "drone/yaw";
+  const liveLocation = () => {
+  const protocol = window.location.protocol === "https:" ? "wss" : "ws";
+  const host = window.location.host; // e.g. "mydroneapi.com" or "localhost:3000"
+  
+  const ws = new WebSocket(`${protocol}://${host.replace(":3000", ":8000")}/ws/location`);
 
-  //   const client = mqtt.connect(brokerUrl);
+  ws.onmessage = (event) => {
+    const location = JSON.parse(event.data);
+    console.log("Drone Location:", location);
+    moveTo({x:location.lat,y:location.lon});
+  };
 
-  //   client.on("connect", () => {
-  //     console.log("Connected to MQTT broker");
-  //     client.subscribe(topic);
-  //   });
-
-  //   client.on("message", (t, message) => {
-  //     if (t === topic) {
-  //       setYaw(parseFloat(message.toString()));
-  //     }
-  //   });
-
-  //   return () => client.end();
-  // }, []);
-
+  return () => ws.close();
+}
 
   // Helper: compute a stop position just outside the slot depending on approach direction
   function getStopPosition(start, target, slotSize) {
@@ -307,6 +300,15 @@ export default function App() {
   }
   return rows.flat();
 }
+
+const handleLiveLoc = async () => {
+    try{
+      liveLocation();
+    }
+    catch(err){
+      console.error(err);
+    }
+};
 
 const handleGenerate = async () => {
     try {
@@ -543,6 +545,7 @@ const handleGenerate = async () => {
       </label><br/>
       <button onClick={handleGenerate}>Generate</button> <br/><br/>
       <button onClick={handleClear}>Clear Data</button> <br/><br/>
+      <button onClick={handleLiveLoc}>Fetch Live Location</button><br/><br/>
     </div>
 
       <button

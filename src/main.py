@@ -6,7 +6,7 @@ import pandas as pd
 import numpy as np
 from pyproj import Transformer
 from shapely.geometry import Polygon, Point
-from pymavlink import mavutil
+from pymavlink import mavutil3
 from datetime import datetime
 import paho.mqtt.client as mqtt
 import threading
@@ -136,7 +136,7 @@ async def get_csv1():
     )
 
 @app.get("/get_csv2")
-async def get_csv1():
+async def get_csv2():
     file_path = r"C:\Users\Muzammil\OneDrive\Desktop\my-app\src\geofence.csv"
     return FileResponse(
         path=file_path,
@@ -146,7 +146,7 @@ async def get_csv1():
 
 # Config
 UDP_PORT = "udp:127.0.0.1:14550"  # your rover’s UDP connection string
-CSV_FILE = "geofence_survey_data.csv"
+# CSV_FILE = "geofence_survey_data.csv"
 DIST_THRESHOLD = 1.0  # meters
 
 # Globals
@@ -169,7 +169,7 @@ def mavlink_logger():
     global logging_active
 
     # ✅ Reset CSV at the start of each session
-    with open(CSV_FILE, mode="w", newline="") as file:
+    with open(geofence_input_path, mode="w", newline="") as file:
         writer = csv.writer(file)
         writer.writerow(["latitude", "longitude", "label", "timestamp", "fix_quality", "h_accuracy"])
 
@@ -202,7 +202,7 @@ def mavlink_logger():
         if last_lat is None or haversine(last_lat, last_lon, lat, lon) >= DIST_THRESHOLD:
             point_count += 1
             label = f"P{point_count}"
-            with open(CSV_FILE, mode="a", newline="") as file:
+            with open(geofence_input_path, mode="a", newline="") as file:
                 writer = csv.writer(file)
                 writer.writerow([lat, lon, label, timestamp, fix_quality, h_acc])
             print(f"✅ Logged {label}: {lat}, {lon}, fix={fix_quality}, acc={h_acc}m")
@@ -213,7 +213,6 @@ def mavlink_logger():
     print("🛑 Logging stopped.")
 
 
-# API endpoints
 @app.post("/start")
 def start_logging():
     global logging_active, logging_thread
