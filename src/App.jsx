@@ -49,6 +49,7 @@ export default function App() {
 
   const [page, setPage] = useState("field"); // “field” or “csv”
 
+  const targetPosRef = useRef({ x: 0, y: 0 });
 
   const slotSize = 48;
   const FRAME_W = 900;
@@ -102,7 +103,7 @@ export default function App() {
           x: bb.minX + bb.width / 2,
           y: bb.minY + bb.height / 2,
         };
-        setTractorPos(initPos);
+        //setTractorPos(initPos);
         tractorPosRef.current = initPos;
       }
       const scaleX = FRAME_W / Math.max(1, bb.width || 1);
@@ -189,6 +190,32 @@ export default function App() {
     };
     // Intentionally only depend on running to preserve original behavior
   }, [running]);
+
+
+function animate() {
+  requestAnimationFrame(animate);
+
+  const current = tractorPosRef.current;
+  const target = targetPosRef.current;
+
+  // Smooth follow
+  const nx = lerp(current.x, target.x, 0.1);
+  const ny = lerp(current.y, target.y, 0.1);
+
+  setTractorPos({ x: nx, y: ny });
+  tractorPosRef.current = { x: nx, y: ny };
+
+  setView((v) => ({
+    ...v,
+    tx: lerp(v.tx, nx, 0.15),
+    ty: lerp(v.ty, ny, 0.15),
+  }));
+}
+
+useEffect(() => {
+  animate();
+}, []);
+
 
   function moveTo(target) {
     return new Promise((resolve) => {
