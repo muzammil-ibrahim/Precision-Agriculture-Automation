@@ -122,7 +122,7 @@ export default function App() {
   ws.onmessage = (event) => {
     const location = JSON.parse(event.data);
     console.log("Drone Location:", location);
-   targetPosRef.current = { x: location.x, y: location.y };
+   targetPosRef.current = { x: location.lat, y: location.lon };
   };
 
   return () => ws.close();
