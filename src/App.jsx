@@ -104,7 +104,7 @@ export default function App() {
           y: bb.minY + bb.height / 2,
         };
         //setTractorPos(initPos);
-        tractorPosRef.current = initPos;
+        //tractorPosRef.current = initPos;
       }
       const scaleX = FRAME_W / Math.max(1, bb.width || 1);
       const scaleY = FRAME_H / Math.max(1, bb.height || 1);
