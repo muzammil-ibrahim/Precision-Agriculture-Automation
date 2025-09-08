@@ -1,23 +1,49 @@
-geofence_coords = [
-    (12.971598, 77.594566),
-    (12.971700, 77.594600),
-    (12.971650, 77.594700),
-    (12.971550, 77.594650),
-    (12.971598, 77.594566)  # Closing the polygon by repeating first point
-]
-import matplotlib.pyplot as plt
+from pymavlink import mavutil
+import time
 
-# Separate lats and lons
-lats, lons = zip(*geofence_coords)
+# ---------------------------
+# Connect to Pixhawk
+# ---------------------------
+print("[INFO] Connecting to Pixhawk...")
 
-plt.figure(figsize=(6,6))
-plt.plot(lons, lats, 'b-', linewidth=2)  # Polygon outline
-plt.fill(lons, lats, 'skyblue', alpha=0.4)  # Fill with transparency
+# Replace with your actual port (Linux: /dev/ttyUSB0, Windows: COM3, etc.)
+master = mavutil.mavlink_connection('COM4', baud=57600)
 
-plt.xlabel("Longitude")
-plt.ylabel("Latitude")
-plt.title("Geofence Polygon")
-plt.grid(True)
-plt.axis('equal')  # Equal scaling for lat/lon
+# Wait for heartbeat (Pixhawk → GCS)
+print("[INFO] Waiting for heartbeat...")
+master.wait_heartbeat()
+print(f"[OK] Heartbeat received from system {master.target_system} component {master.target_component}")
 
-plt.show()
+
+# ---------------------------
+# Function to send servo PWM
+# ---------------------------
+def set_servo(channel, pwm):
+    print(f"[DEBUG] Sending PWM {pwm} to channel {channel}")
+    
+    master.mav.command_long_send(
+        master.target_system,             # Target system
+        master.target_component,          # Target component
+        mavutil.mavlink.MAV_CMD_DO_SET_SERVO, # Command ID
+        0,                                # Confirmation
+        channel,                          # Servo channel (1-16)
+        pwm,                              # PWM microseconds (1000-2000 typical)
+        0, 0, 0, 0, 0                     # Unused parameters
+    )
+
+    # Listen for ACK (optional, not all firmwares respond)
+    ack = master.recv_match(type='COMMAND_ACK', blocking=False)
+    if ack:
+        print(f"[ACK] {ack}")
+
+
+# ---------------------------
+# Example test sequence
+# ---------------------------
+test_pwms = [1000, 1500, 2000]
+
+for pwm in test_pwms:
+    set_servo(10, pwm)    # Channel 1 → Servo
+    time.sleep(2)
+
+print("[INFO] Test sequence complete.")
