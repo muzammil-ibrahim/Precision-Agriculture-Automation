@@ -1,0 +1,100 @@
+import serial
+from itertools import cycle
+from pymavlink import mavutil
+
+# --------------------------
+# CONFIGURATION
+# --------------------------
+# Serial port of the BASE station (USB GNSS receiver that outputs RTCM)
+BASE_PORT = "/dev/ttyACM0"     # check with `ls /dev/tty*` after plugging base
+BASE_BAUD = 115200             # typical for GNSS receivers
+
+# Serial port of TELEMETRY radio connected to Pi
+TELEM_PORT = "/dev/ttyUSB0"    # check with `ls /dev/tty*`
+TELEM_BAUD = 57600             # set to same as Pixhawk telemetry baud
+
+# Max payload per MAVLink GPS_RTCM_DATA packet
+MAX_FRAGMENT_SIZE = 180
+SEQ_NO = cycle(range(32))      # Sequence number generator
+
+# --------------------------
+# SETUP CONNECTIONS
+# --------------------------
+print("Opening Base GNSS receiver on", BASE_PORT)
+base_serial = serial.Serial(BASE_PORT, BASE_BAUD, timeout=1)
+
+print("Opening Telemetry link on", TELEM_PORT)
+the_connection = mavutil.mavlink_connection(TELEM_PORT, baud=TELEM_BAUD)
+
+print("Waiting for heartbeat from Pixhawk over telemetry...")
+the_connection.wait_heartbeat()
+print("Got heartbeat from system (system %u component %u)" %
+      (the_connection.target_system, the_connection.target_component))
+
+
+# --------------------------
+# FUNCTION TO SEND RTCM
+# --------------------------
+def send_rtcm(raw_rtcm):
+    """Send RTCM message over MAVLink, fragmenting if needed"""
+    if len(raw_rtcm) > MAX_FRAGMENT_SIZE:
+        # Split into 180-byte fragments
+        slices = [
+            raw_rtcm[i:(i + MAX_FRAGMENT_SIZE)]
+            for i in range(0, len(raw_rtcm), MAX_FRAGMENT_SIZE)
+        ]
+
+        # If last fragment is full size, append an empty fragment
+        if len(slices[-1]) == MAX_FRAGMENT_SIZE:
+            slices.append(b"")
+
+        # Drop if more than 4 fragments
+        if len(slices) > 4:
+            print(f"Dropping oversized RTCM packet: {len(raw_rtcm)} bytes")
+            return
+
+        seq_no = next(SEQ_NO)
+
+        for fragment_id, packet in enumerate(slices):
+            flags = (seq_no << 3) + (fragment_id << 1) + 1
+            the_connection.mav.gps_rtcm_data_send(
+                flags,
+                len(packet),
+                packet.ljust(180, b"\x00")
+            )
+    else:
+        # Single packet
+        the_connection.mav.gps_rtcm_data_send(
+            0,
+            len(raw_rtcm),
+            raw_rtcm.ljust(180, b"\x00")
+        )
+
+
+# --------------------------
+# MAIN LOOP
+# --------------------------
+print("Forwarding RTCM from Base → Telemetry → Pixhawk")
+buffer = b""
+
+while True:
+    byte = base_serial.read(1)
+    if not byte:
+        continue
+
+    buffer += byte
+
+    # RTCM messages start with 0xD3 and have a 10-bit length field
+    if len(buffer) >= 3:
+        if buffer[0] != 0xD3:
+            buffer = b""
+            continue
+
+        # length is lower 6 bits of byte 1 + byte 2
+        length = ((buffer[1] & 0x03) << 8) | buffer[2]
+        full_length = length + 6  # header (3) + length + checksum (3)
+
+        if len(buffer) == full_length:
+            # Got a complete RTCM message
+            send_rtcm(buffer)
+            buffer = b""
