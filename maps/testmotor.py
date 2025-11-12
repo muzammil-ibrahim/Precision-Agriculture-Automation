@@ -16,7 +16,7 @@ rpm_100m = '01 64 FF 9C 00 00 00 00 00 9A'
 x = "01 64 75 30 00 00 00 00 00 A7 "
 #serial_ports = ['COM10', 'COM11']
 serial_ports = ['COM12']
-baud_rate = 9600
+baud_rate = 115200
 ser_dict = {port: serial.Serial(port, baudrate=baud_rate, timeout=1) for port in serial_ports}
 
 def send_hex_command(ser, hex_command):
@@ -134,7 +134,7 @@ def on_message(message):
     try:
         # x = json.loads(message)
         if message=="EMERGENCYSTOP":
-            thread1 = threading.Thread(target=brake, args=(ser_dict['COM10'],br))
+            thread1 = threading.Thread(target=brake, args=(ser_dict['COM12'],br))
             # thread2 = threading.Thread(target=brake, args=(ser_dict['COM11'],br))    
 
             thread1.start()
@@ -147,7 +147,7 @@ def on_message(message):
             return "The Car is online"
         elif message=="FORWARD":
             print("Forward")
-            thread1 = threading.Thread(target=run_motor, args=(ser_dict['COM12'], 2, rpm_100m))
+            thread1 = threading.Thread(target=run_motor, args=(ser_dict['COM12'], 2, rpm_50m))
             # thread2 = threading.Thread(target=run_motor, args=(ser_dict['COM11'], 2, rpm_100p))
             
 
@@ -178,7 +178,7 @@ def on_message(message):
             return "Car is moving forward"
         elif message=="BACKWARD":
             print("Backward")
-            thread1 = threading.Thread(target=run_motor, args=(ser_dict['COM10'], 5, rpm_50p))
+            thread1 = threading.Thread(target=run_motor, args=(ser_dict['COM12'], 5, rpm_50p))
             # thread2 = threading.Thread(target=run_motor, args=(ser_dict['COM11'], 5, rpm_50m))
 
             thread1.start()
@@ -190,7 +190,7 @@ def on_message(message):
             return "Car is moving Backward"
         elif message=="LEFT":
             print("Left")
-            thread1 = threading.Thread(target=run_motor, args=(ser_dict['COM9'], 3, rpm_100m))
+            thread1 = threading.Thread(target=run_motor, args=(ser_dict['COM12'], 3, rpm_100m))
             #thread2 = threading.Thread(target=run_motor, args=(ser_dict['COM11'], 3, rpm_100m))
             thread1.start() 
             #thread2.start()
@@ -201,7 +201,7 @@ def on_message(message):
             return "Car is turning left"
         elif message=="RIGHT":
             print("Right")
-            thread1 = threading.Thread(target=run_motor, args=(ser_dict['COM10'], 3, rpm_100p))
+            thread1 = threading.Thread(target=run_motor, args=(ser_dict['COM12'], 3, rpm_100p))
             #thread2 = threading.Thread(target=run_motor, args=(ser_dict['COM11'], 3, rpm_100p))
 
             thread1.start()

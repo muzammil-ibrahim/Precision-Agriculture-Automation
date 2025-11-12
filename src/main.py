@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query , BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
@@ -11,7 +11,6 @@ from shapely.geometry import Polygon, Point
 from pymavlink import mavutil
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
-import paho.mqtt.client as mqtt
 import threading
 import time
 from datetime import datetime
@@ -19,7 +18,6 @@ import math
 import csv
 import serial
 import os
-from dronekit import connect, VehicleMode
 import asyncio
 app = FastAPI()
 
@@ -168,17 +166,8 @@ async def get_csv2():
         filename="geofence.csv",
         headers=headers
     )
-    '''try:
-        with open(file_path, "r") as f:
-            content = f.read()
-        df = pd.read_csv(StringIO(content), sep=';')
-        return df.to_string()
-    except Exception as e:
-        return str(e)'''
 
 
-UDP_PORT = "/dev/ttyACM0"  # your rover’s UDP connection string
-# UDP_PORT = "udp:127.0.0.1:14550"
 DIST_THRESHOLD = 1.0  # meters
 
 logging_active = False
@@ -240,11 +229,6 @@ async def websocket_endpoint(websocket: WebSocket):
     connected_clients.append(websocket)
 
     try:
-        # --- Connect via MAVLink ---
-        # master = mavutil.mavlink_connection(UDP_PORT)``
-        # master.wait_heartbeat()
-        # print("✅ Connected to autopilot via MAVLink")
-
         # --- Load geofence & setup transformer ---
         df_geofence = pd.read_csv(geofence_input_path)
         mean_lon = df_geofence["longitude"].mean()
@@ -258,15 +242,12 @@ async def websocket_endpoint(websocket: WebSocket):
 
         # --- Loop for MAVLink position ---
         while True:
-            # Wait for position message (non-blocking with timeout)
-            msg = master.recv_match(type="GLOBAL_POSITION_INT", blocking=True, timeout=5)
-            if not msg:
-                continue  # skip if nothing received
+            lat = current_state.get("lat")
+            lon = current_state.get("lon")
 
-            # Convert raw MAVLink (1e7 scaled integers) to degrees
-            lat = msg.lat / 1e7
-            lon = msg.lon / 1e7
-            # alt = msg.relative_alt / 1000.0  # mm → meters
+            if lat is None or lon is None:
+                await asyncio.sleep(1)
+                continue  # skip until data is available
 
             # Transform to field-relative XY
             x_m, y_m = transformer.transform(lon, lat)
@@ -295,6 +276,7 @@ async def websocket_endpoint(websocket: WebSocket):
             connected_clients.remove(websocket)
 
 
+
 @app.websocket("/ws/yaw")
 async def websocket_yaw(websocket: WebSocket):
     await websocket.accept()
@@ -307,59 +289,69 @@ async def websocket_yaw(websocket: WebSocket):
     except WebSocketDisconnect:
         print("Client disconnected")
 
-# MISSION endpoints
-
-master = mavutil.mavlink_connection('COM4', baud=57600)
-
-@app.on_event("startup")
-async def startup_event():
-    master.wait_heartbeat()
-    print("Connected to vehicle")
-    # convert_points_to_latlon(geofence_input_path,points_output_path,points_latlon)
-
     
     
 
 @app.get("/start_mission")
-async def start_mission():
-    convert_points_to_latlon(geofence_input_path,points_output_path,points_latlon)
-    waypoints = load_waypoints(points_latlon)
-    triggered = [False] * len(waypoints)
-    print(f"Loaded {len(waypoints)} waypoints.")
-
-    while not all(triggered):
-        msg = master.recv_match(type='GLOBAL_POSITION_INT', blocking=True)
-        lat = msg.lat / 1e7
-        lon = msg.lon / 1e7
-
-        for i, (wlat, wlon) in enumerate(waypoints):
-            if not triggered[i]:
-                distance = haversine(lat, lon, wlat, wlon)
-                if distance < 0.5:  # within 0.5 meters
-                    print(f"Reached waypoint {i+1} (distance: {distance:.2f} m)")
-                    send_command(master, 10, 2000)  # Trigger servo
-                    time.sleep(1)
-                    send_command(master, 10, 1000)  # Reset servo
-                    triggered[i] = True
-
-        if all(triggered):
-            print("All waypoints completed.")
-            break
-        time.sleep(1)
-
-    return {"status": "Mission completed"}
+async def start_mission(background_tasks: BackgroundTasks):
+    background_tasks.add_task(mission_task)
+    return {"status": "Mission started"}
 
 
 app.mount("/", StaticFiles(directory=base_dir+"/dist", html=True), name="static")
 
+master = mavutil.mavlink_connection('COM4', baud=57600)
+master.wait_heartbeat()
+print("✅ MAVLink connected")
+
+# Global shared state
+current_state = {
+    "lat": None,
+    "lon": None,
+    "yaw": None,
+    "h_acc": None,
+    "fix_type": None,
+    "timestamp": None,
+}
+
+def reader():
+    while True:
+        try:
+            msg = master.recv_match(blocking=True, timeout=5)
+            if not msg:
+                continue
+
+            mtype = msg.get_type()
+
+            if mtype == "GLOBAL_POSITION_INT":
+                current_state["lat"] = msg.lat / 1e7
+                current_state["lon"] = msg.lon / 1e7
+
+            elif mtype == "ATTITUDE":
+                # Yaw is in radians; convert to degrees if needed
+                current_state["yaw"] = msg.yaw  
+
+            elif mtype == "GPS_RAW_INT":
+                current_state["h_acc"] = (
+                    msg.h_acc / 1000.0 if msg.h_acc != 0xFFFF else None
+                )
+                current_state["fix_type"] = msg.fix_type
+                current_state["timestamp"] = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        except Exception as e:
+            print(f"Reader error: {e}")
+            time.sleep(2)  # small backoff on error
+
+# Start reader in background
+threading.Thread(target=reader, daemon=True).start()
 
 
 
 def get_yaw():
-    msg = master.recv_match(type='ATTITUDE', blocking=True, timeout=5)
-    if msg:
-        yaw_rad = msg.yaw  # radians
-        yaw_deg = math.degrees(yaw_rad)
+    """Return the latest yaw and lat/lon from shared state."""
+    yaw = current_state.get("yaw")
+    if yaw is not None:
+        yaw_deg = math.degrees(yaw)
         return yaw_deg
     return None
 
@@ -383,19 +375,19 @@ def mavlink_logger():
         writer = csv.writer(file)
         writer.writerow(["latitude", "longitude", "label", "timestamp", "fix_quality", "h_accuracy"])
 
-  
     last_lat, last_lon = None, None
     point_count = 0
 
     while logging_active:
-        msg = master.recv_match(type="GPS_RAW_INT", blocking=True, timeout=5)
-        if not msg:
+        lat = current_state.get("lat")
+        lon = current_state.get("lon")
+        h_acc = current_state.get("h_acc")
+        fix_type = current_state.get("fix_type")
+
+        if lat is None or lon is None:
+            time.sleep(0.5)
             continue
 
-        lat = msg.lat / 1e7
-        lon = msg.lon / 1e7
-        h_acc = msg.h_acc / 1000.0 if msg.h_acc != 0xFFFF else None
-        fix_type = msg.fix_type
         timestamp = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
 
         fix_quality_map = {
@@ -416,6 +408,7 @@ def mavlink_logger():
         time.sleep(0.5)
 
     print("Logging stopped.")
+
 
 
 # Send a command to the vehicle (e.g., set servo PWM)
@@ -481,3 +474,31 @@ def convert_points_to_latlon(
 
     except Exception as e:
         raise RuntimeError(f"Conversion failed: {e}")
+
+def mission_task():
+    convert_points_to_latlon(geofence_input_path, points_output_path, points_latlon)
+    waypoints = load_waypoints(points_latlon)
+    triggered = [False] * len(waypoints)
+    print(f"Loaded {len(waypoints)} waypoints.")
+
+    while not all(triggered):
+        lat = current_state.get("lat")
+        lon = current_state.get("lon")
+
+        if lat is None or lon is None:
+            time.sleep(0.5)
+            continue  # wait until we have valid GPS
+
+        for i, (wlat, wlon) in enumerate(waypoints):
+            if not triggered[i]:
+                distance = haversine(lat, lon, wlat, wlon)
+                if distance < 0.5:  # within 0.5 meters
+                    print(f"Reached waypoint {i+1} (distance: {distance:.2f} m)")
+                    send_command(master, 10, 2000)
+                    time.sleep(1)
+                    send_command(master, 10, 1000)
+                    triggered[i] = True
+
+        time.sleep(1)
+
+    print("All waypoints completed.")

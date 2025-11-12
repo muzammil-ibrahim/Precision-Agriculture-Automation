@@ -29,21 +29,41 @@ void setup() {
   delay(500);
 
   // 1. Switch to velocity mode
-  uint8_t modeCmd[9] = {0x01, 0xA0, 0,0,0,0,0,0, 0x02};
+  uint8_t modeCmd[9] = {0x00, 0xA0, 0,0,0,0,0,0, 0x02};
   sendFrame(modeCmd);
   delay(200);
 
   // 2. Send 50 RPM command
-  uint8_t velCmd[9] = {0x01, 0x64, 0x00, 0x32, 0,0,0,0, 0x00};
+  uint8_t velCmd[9] = {0x00, 0x64, 0x00, 0x32, 0,0,0,0, 0x00};
   sendFrame(velCmd);
   Serial.println("Motor running at 50 RPM");
   
-  delay(10000);  // Wait 10 seconds
+  delay(5000);  // Wait 10 seconds
 
-  // 3. Brake/stop
-  uint8_t brakeCmd[9] = {0x01, 0x64, 0x00, 0x00, 0,0,0, 0xFF, 0x00};
-  sendFrame(brakeCmd);
+    // 3. Brake/stop
+  uint8_t brakeCmd1[9] = {0x00, 0x64, 0x00, 0x00, 0,0,0, 0xFF, 0x00};
+  sendFrame(brakeCmd1);
   Serial.println("Brake command sent");
+  delay(2000);
+
+  // // Command frame for 100 RPM
+  // uint8_t velCmd1[10] = { 
+  // 0x01, // ID
+  // 0x64, // Command: velocity loop
+  // 0x00, 0x64, // Velocity = 100 (0x0064)
+  // 0x00, 0x00, 0x00, 0x00, // Reserved
+  // 0x4F  // CRC
+  // };
+
+  // sendFrame(velCmd1);
+  // Serial.println("Motor running at 100 RPM");
+  
+  // delay(5000);
+
+  // // 3. Brake/stop
+  // uint8_t brakeCmd[9] = {0x01, 0x64, 0x00, 0x00, 0,0,0, 0xFF, 0x00};
+  // sendFrame(brakeCmd);
+  // Serial.println("Brake command sent");
 }
 
 void loop() {
